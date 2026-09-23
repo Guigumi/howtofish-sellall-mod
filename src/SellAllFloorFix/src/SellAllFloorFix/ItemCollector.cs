@@ -42,6 +42,11 @@ namespace SellAllFloorFix
                 int worth = ReadWorth(b);
                 if (soVendaveis && worth <= 0 && !incluirSemValor) continue;
                 object? netObj = FindNetworkObject(go);
+                if (netObj == null)
+                {
+                    Plugin.Log.LogDebug("SellAll: pulando '" + go.name + "' (sem NetworkObject; não conta no total).");
+                    continue;
+                }
                 out_.Add(new GroundItem(go, Math.Max(0, worth), b, netObj));
             }
             return out_;
@@ -126,14 +131,25 @@ namespace SellAllFloorFix
 
         private static object? FindNetworkObject(GameObject go)
         {
-            var comps = go.GetComponents<Component>();
-            foreach (var c in comps)
+            // Mesmo GameObject, depois pais, depois filhos: cobre root NetworkObject + Item visual filho.
+            foreach (var c in go.GetComponents<Component>())
             {
-                if (c == null) continue;
-                if (c.GetType().Name == "NetworkObject")
-                    return c;
+                if (IsNetworkObject(c)) return c;
+            }
+            foreach (var c in go.GetComponentsInParent<Component>(true))
+            {
+                if (IsNetworkObject(c)) return c;
+            }
+            foreach (var c in go.GetComponentsInChildren<Component>(true))
+            {
+                if (IsNetworkObject(c)) return c;
             }
             return null;
+        }
+
+        private static bool IsNetworkObject(Component? c)
+        {
+            return c != null && c.GetType().Name == "NetworkObject";
         }
     }
 }

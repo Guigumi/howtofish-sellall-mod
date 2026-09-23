@@ -8,6 +8,7 @@ namespace SellAllFloorFix
     {
         private static readonly string[] SellMethodNames = { "Sell", "SellItem", "CmdSell", "ServerSell", "SellToShop" };
         private static readonly string[] CreditMethodNames = { "AddMoney", "Add", "GiveMoney", "AddCoins" };
+        private static readonly string[] LocalPlayerFlagNames = { "IsLocalPlayer", "isLocalPlayer", "IsLocal", "isLocal", "IsOwner", "isOwner", "IsMine", "isMine", "IsMainPlayer", "isMainPlayer", "IsClient", "isClient" };
 
         public static bool TryNativeSell(Component item)
         {
@@ -46,22 +47,62 @@ namespace SellAllFloorFix
             return false;
         }
 
-        public static void Credit(int total)
+        // Retorna true se o crédito foi aplicado; false veta o despawn no chamador (spec §6).
+        public static bool Credit(int total)
         {
-            if (total <= 0) return;
-            if (TryCreditViaMoneyManager(total)) return;
-            Plugin.Log.LogWarning("SellAll: nenhum MoneyManager achado; dinheiro NÃO creditado (itens ainda serão despawnados).");
+            if (total <= 0) return true;
+            if (TryCreditViaMoneyManager(total)) return true;
+            Plugin.Log.LogWarning("SellAll: dinheiro NÃO creditado ($" + total + "); itens mantidos no chão.");
+            return false;
         }
 
         private static bool TryCreditViaMoneyManager(int total)
         {
+            Type? playerType = FindPlayerType();
+            object? localPlayer = playerType != null ? ResolveLocalPlayer(playerType) : null;
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
                 Type? mmType = null;
                 try { mmType = asm.GetType("MoneyManager"); } catch { continue; }
                 if (mmType == null) continue;
-                // 1) método estático single-int AddMoney(int) / Add(int) / GiveMoney(int) / AddCoins(int).
-                // NUNCA chamar overloads (int, Player): Player local não resolvível com segurança.
+                // 1) Rota real: AddMoney(int, Player) estático (ver inspection-notes.md).
+                if (playerType != null && localPlayer != null)
+                {
+                    foreach (var m in mmType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
+                    {
+                        if (m.Name != "AddMoney") continue;
+                        var ps = m.GetParameters();
+                        if (ps.Length != 2) continue;
+                        if (ps[0].ParameterType != typeof(int)) continue;
+                        if (!ps[1].ParameterType.IsAssignableFrom(playerType)) continue;
+                        try { m.Invoke(null, new object[] { total, localPlayer }); AfterCreditFx(total); return true; }
+                        catch (Exception e) { Plugin.Log.LogDebug("AddMoney(int,Player) estático falhou: " + e.GetBaseException().Message); }
+                    }
+                    // 2) Rota real via instância singleton: Instance.AddMoney(total, player).
+                    try
+                    {
+                        object? inst = GetMoneyManagerInstance(mmType);
+                        if (inst != null)
+                        {
+                            foreach (var m in mmType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+                            {
+                                if (m.Name != "AddMoney") continue;
+                                var ps = m.GetParameters();
+                                if (ps.Length != 2) continue;
+                                if (ps[0].ParameterType != typeof(int)) continue;
+                                if (!ps[1].ParameterType.IsAssignableFrom(playerType)) continue;
+                                try { m.Invoke(inst, new object[] { total, localPlayer }); AfterCreditFx(total); return true; }
+                                catch (Exception e) { Plugin.Log.LogDebug("AddMoney(int,Player) instância falhou: " + e.GetBaseException().Message); }
+                            }
+                        }
+                    }
+                    catch (Exception e) { Plugin.Log.LogDebug("MoneyManager instância (int,Player) falhou: " + e.GetBaseException().Message); }
+                }
+                else if (playerType != null)
+                {
+                    Plugin.Log.LogDebug("SellAll: Player local não resolvido; tentando fallbacks single-int.");
+                }
+                // 3) Fallbacks single-int (legado): estático AddMoney(int) / Add(int) / ...
                 foreach (var mn in CreditMethodNames)
                 {
                     var m = mmType.GetMethod(mn, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static, null, new[] { typeof(int) }, null);
@@ -69,22 +110,10 @@ namespace SellAllFloorFix
                     try { m.Invoke(null, new object[] { total }); AfterCreditFx(total); return true; }
                     catch (Exception e) { Plugin.Log.LogDebug(mn + " falhou: " + e.GetBaseException().Message); }
                 }
-                // 2) instância singleton single-int: Instance.AddMoney(total)
+                // 4) Fallbacks single-int (legado): instância singleton.
                 try
                 {
-                    object? inst = null;
-                    var instProp = mmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                    if (instProp != null) inst = instProp.GetValue(null, null);
-                    if (inst == null)
-                    {
-                        var f = mmType.GetField("Instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                        if (f != null) inst = f.GetValue(null);
-                    }
-                    if (inst == null)
-                    {
-                        var found = UnityEngine.Object.FindObjectOfType(mmType) as Component;
-                        if (found != null) inst = found;
-                    }
+                    object? inst = GetMoneyManagerInstance(mmType);
                     if (inst != null)
                     {
                         foreach (var mn in CreditMethodNames)
@@ -100,6 +129,83 @@ namespace SellAllFloorFix
                 catch (Exception e) { Plugin.Log.LogDebug("MoneyManager instância falhou: " + e.GetBaseException().Message); }
             }
             return false;
+        }
+
+        private static Type? FindPlayerType()
+        {
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    var t = asm.GetType("Player");
+                    if (t != null) return t;
+                }
+                catch { }
+            }
+            Plugin.Log.LogDebug("SellAll: tipo Player não achado nos assemblies.");
+            return null;
+        }
+
+        private static object? ResolveLocalPlayer(Type playerType)
+        {
+            UnityEngine.Object[] all;
+            try { all = UnityEngine.Object.FindObjectsOfType(playerType); }
+            catch (Exception e) { Plugin.Log.LogDebug("FindObjectsOfType(Player) falhou: " + e.GetBaseException().Message); return null; }
+            if (all == null || all.Length == 0) return null;
+            foreach (var o in all)
+            {
+                if (o == null) continue;
+                if (HasLocalFlag(o)) return o;
+            }
+            return all[0]; // sem flag local determinável: primeiro achado
+        }
+
+        private static bool HasLocalFlag(object o)
+        {
+            var t = o.GetType();
+            foreach (var n in LocalPlayerFlagNames)
+            {
+                try
+                {
+                    var f = t.GetField(n, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (f != null && f.FieldType == typeof(bool) && (bool)f.GetValue(o)!) return true;
+                    var p = t.GetProperty(n, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (p != null && p.PropertyType == typeof(bool) && p.CanRead && (bool)p.GetValue(o, null)!) return true;
+                }
+                catch { }
+            }
+            return false;
+        }
+
+        private static object? GetMoneyManagerInstance(Type mmType)
+        {
+            var instProp = mmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            if (instProp != null)
+            {
+                try
+                {
+                    var v = instProp.GetValue(null, null);
+                    if (v != null) return v;
+                }
+                catch { }
+            }
+            var f = mmType.GetField("Instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            if (f != null)
+            {
+                try
+                {
+                    var v = f.GetValue(null);
+                    if (v != null) return v;
+                }
+                catch { }
+            }
+            try
+            {
+                var found = UnityEngine.Object.FindObjectOfType(mmType) as Component;
+                if (found != null) return found;
+            }
+            catch { }
+            return null;
         }
 
         private static void AfterCreditFx(int total)
