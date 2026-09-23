@@ -25,7 +25,7 @@ namespace SellAllFloorFix
     {
         private static readonly string[] ItemTypeNames = { "Item", "Creature" };
         private static readonly string[] WorthNames = { "TotalWorth", "DefaultWorth", "Worth", "worth", "price", "Price", "value", "Value", "sellPrice", "SellPrice" };
-        private static readonly string[] HeldNames = { "HasPlayerHolder", "IsInInventory", "HasBeenHeld", "isHeld", "IsHeld", "held", "Held", "inHand", "InHand", "equipped", "Equipped" };
+        private static readonly string[] HeldNames = { "HasPlayerHolder", "IsInInventory", "isHeld", "IsHeld", "held", "Held", "inHand", "InHand", "equipped", "Equipped" };
 
         public static List<GroundItem> Collect(bool soVendaveis, bool incluirSemValor)
         {
