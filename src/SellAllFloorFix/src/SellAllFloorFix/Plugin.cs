@@ -1,39 +1,37 @@
 using BepInEx;
 using BepInEx.Logging;
+using UnityEngine;
 
-namespace SellAllFloorFix;
-
-// Here are some basic resources on code style and naming conventions to help
-// you in your first CSharp plugin!
-// https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/coding-style/coding-conventions
-// https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/coding-style/identifier-names
-// https://learn.microsoft.com/en-us/dotnet/standard/design-guidelines/names-of-namespaces
-
-// The BepInAutoPlugin attribute comes from the Hamunii.BepInEx.AutoPlugin
-// NuGet package, and it will generate the BepInPlugin attribute for you!
-// For more info, see https://github.com/Hamunii/BepInEx.AutoPlugin
-
-/// <summary>
-/// The BepInEx plugin class of SellAllFloorFix.
-/// </summary>
-[BepInAutoPlugin]
-public partial class Plugin : BaseUnityPlugin
+namespace SellAllFloorFix
 {
-    internal static ManualLogSource Log { get; private set; } = null!;
-
-    private void Awake()
+    [BepInPlugin("Guigumi.SellAllFloorFix", "SellAllFloorFix", "1.0.0")]
+    public sealed class Plugin : BaseUnityPlugin
     {
-        // BepInEx gives us a logger which we can use to log information.
-        // See https://lethal.wiki/dev/fundamentals/logging
-        Log = Logger;
+        internal static ManualLogSource Log = null!;
+        internal SellAllConfig Cfg = null!;
+        private float _lastRun = -999f;
 
-        // BepInEx also gives us a config file for easy configuration.
-        // See https://lethal.wiki/dev/intermediate/custom-configs
+        private void Awake()
+        {
+            Log = Logger;
+            Cfg = new SellAllConfig(Config);
+            Log.LogInfo("SellAllFloorFix v1.0.0 loaded. Tecla: " + Cfg.Tecla.Value);
+        }
 
-        // We can apply our hooks here.
-        // See https://lethal.wiki/dev/fundamentals/patching-code
+        private void Update()
+        {
+            if (Cfg.Tecla.Value.IsDown())
+            {
+                if (Time.realtimeSinceStartup - _lastRun < Cfg.CooldownSeg.Value)
+                    return;
+                _lastRun = Time.realtimeSinceStartup;
+                TrySellAll();
+            }
+        }
 
-        // Log our awake here so we can see it in LogOutput.log file
-        Log.LogInfo($"Plugin {Name} is loaded!");
+        private void TrySellAll()
+        {
+            Log.LogInfo("SellAll: tecla detectada (stub da Task 3). Lógica real entra na Task 5.");
+        }
     }
 }
