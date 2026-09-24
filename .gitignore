@@ -1,5 +1,6 @@
 # Build artifacts
 artifacts/
+dist/
 [Bb]in/
 [Oo]bj/
 [Rr]elease/
